@@ -24,6 +24,9 @@ USAGE
 =====
 
 Take a look at tprpg.h and the included tprpg, cards, and blackjack examples.
+Don't use this for anything security sensitive unless your have someone more
+qualified than me evaluate it (and if you do, it would be awsome if you shared
+the results).
 
 INSTALLATION
 ============
