@@ -46,7 +46,7 @@ static inline int32_t isqrt32(uint32_t x) {
 }
 
 /* quick-and-dirty parameter selection */
-static inline void tprpg_sel_ab(uint32_t k, uint32_t *a, uint32_t *b) {
+static inline void tprpg32_sel_ab(uint32_t k, uint32_t *a, uint32_t *b) {
   uint32_t x, y;
 #ifdef TPRPG_SMALL_DOM_HACK
   if (k < 256) {
@@ -175,7 +175,7 @@ uint32_t tprpg(tprpg_ctx *ctx, const uint32_t m, const uint32_t k) {
   uint32_t i, c;
 
   if (ctx->last_k != k) { /* regenerate a and b if k has changed */
-    tprpg_sel_ab(k, &(ctx->a), &(ctx->b));
+    tprpg32_sel_ab(k, &(ctx->a), &(ctx->b));
     ctx->last_k = k;
   }
 
