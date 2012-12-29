@@ -147,25 +147,6 @@ static uint32_t _tprpg_xtea32(const uint32_t m, const uint32_t key[4]) {
   return ((uint32_t)l << 16) + r;
 }
 
-#if 0
-/* XTEA modified for uint64 in/out */
-static uint64_t _tprpg_xtea64(const uint64_t m, const uint32_t key[4]) {
-  uint32_t i, sum=0;
-  uint32_t l, r;
-
-  l = m >> 32;        /* upper 32 bits */
-  r = m & 0xffffffff; /* lower 32 bits */
-  for (i=0; i < NUM_CYCLES; i++) {
-    /* odd round */
-    l += XTEA64_RND(r, sum);
-    sum += DELTA;
-    /* even round */
-    r += XTEA64_RND(l, sum>>11);
-  }
-  return ((uint64_t)l << 32) + r;
-}
-#endif
-
 /* Generalized Feistel cipher using modified XTEA as round function */
 uint32_t tprpg(tprpg_ctx *ctx, const uint32_t m, const uint32_t k) {
   if (ctx->state != TPRPG_KEYED)
