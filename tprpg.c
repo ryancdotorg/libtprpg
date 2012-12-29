@@ -14,6 +14,48 @@
 
 #include "tprpg.h"
 
+#define XTEA64_RND(V,I) ((((V << 4) ^ (V >> 5)) + V) ^ (sum + key[(I) & 3]))
+#define XTEA32_RND(V,I) ((((V << 2) ^ (V >> 3)) + V) ^ (sum + key[(I) & 3]))
+#define DELTA           0x9e3779b9
+#define NUM_CYCLES      16
+#define NUM_ROUNDS      (NUM_CYCLES*2)
+#define KSA_ROUNDS      10
+#define FEISTEL_RNDS    16
+
+/* XTEA modified for uint32 in/out */
+static uint32_t _tprpg_xtea32(const uint32_t m, const uint32_t key[4]) {
+  uint32_t i, sum=0;
+  uint16_t l, r;
+
+  l = m >> 16;    /* upper 16 bits */
+  r = m & 0xffff; /* lower 16 bits */
+  for (i=0; i < NUM_CYCLES; i++) {
+    /* odd round */
+    l += XTEA32_RND(r, sum);
+    sum += DELTA;
+    /* even round */
+    r += XTEA32_RND(l, sum>>11);
+  }
+  return ((uint32_t)l << 16) + r;
+}
+
+/* XTEA modified for uint64 in/out */
+static uint64_t _tprpg_xtea64(const uint64_t m, const uint64_t key[4]) {
+  uint64_t i, sum=0;
+  uint32_t l, r;
+
+  l = m >> 32;        /* upper 32 bits */
+  r = m & 0xffffffff; /* lower 32 bits */
+  for (i=0; i < NUM_CYCLES; i++) {
+    /* odd round */
+    l += XTEA64_RND(r, sum);
+    sum += DELTA;
+    /* even round */
+    r += XTEA64_RND(l, sum>>11);
+  }
+  return ((uint64_t)l << 32) + r;
+}
+
 /* Integer square root by Halleck's method */
 static inline int32_t isqrt32(uint32_t x) {
   uint32_t squaredbit;
@@ -31,7 +73,38 @@ static inline int32_t isqrt32(uint32_t x) {
    squaredbit = 1<<30;
 
    /* Form bits of the answer. */
-   remainder = x;  root = 0;
+   remainder = x; root = 0;
+   while (squaredbit > 0) {
+     if (remainder >= (squaredbit | root)) {
+         remainder -= (squaredbit | root);
+         root >>= 1; root |= squaredbit;
+     } else {
+         root >>= 1;
+     }
+     squaredbit >>= 2; 
+   }
+
+   return root;
+}
+
+/* Integer square root by Halleck's method, 64 bit version */
+static inline int64_t isqrt64(uint64_t x) {
+  uint64_t squaredbit;
+  uint64_t remainder;
+  uint64_t root;
+
+   if (x<1) return 0;
+  
+   /* We really want to load the binary constant 01 00 00 ... 00, 
+    *   (There must be an even number of zeros to the right
+    *    of the single one bit, and the one bit as far to the
+    *    left as can be done within that constraint)
+    */
+   remainder = x>>2;
+   squaredbit = (uint64_t)1<<62;
+
+   /* Form bits of the answer. */
+   remainder = x; root = 0;
    while (squaredbit > 0) {
      if (remainder >= (squaredbit | root)) {
          remainder -= (squaredbit | root);
@@ -48,16 +121,6 @@ static inline int32_t isqrt32(uint32_t x) {
 /* quick-and-dirty parameter selection */
 static inline void tprpg32_sel_ab(uint32_t k, uint32_t *a, uint32_t *b) {
   uint32_t x, y;
-#ifdef TPRPG_SMALL_DOM_HACK
-  if (k < 256) {
-    x = 1;
-    while (x * x < k)
-      x <<= 1;
-    *a = *b = x;
-    /* fprintf(stderr, "a: %3u b: %3u\n", *a, *b); */
-    return;
-  }
-#endif
   /* start with integer square root */
   x = y = isqrt32(k);
   /* We're done if k was a perfect square */
@@ -71,13 +134,20 @@ static inline void tprpg32_sel_ab(uint32_t k, uint32_t *a, uint32_t *b) {
   /* fprintf(stderr, "a: %3u b: %3u\n", *a, *b); */
 }
 
-#define XTEA64_RND(V,I) ((((V << 4) ^ (V >> 5)) + V) ^ (sum + key[(I) & 3]))
-#define XTEA32_RND(V,I) ((((V << 2) ^ (V >> 3)) + V) ^ (sum + key[(I) & 3]))
-#define DELTA           0x9e3779b9
-#define NUM_CYCLES      16
-#define NUM_ROUNDS      (NUM_CYCLES*2)
-#define KSA_ROUNDS      10
-#define FEISTEL_RNDS    16
+/* quick-and-dirty parameter selection, 64 bit version */
+static inline void tprpg64_sel_ab(uint64_t k, uint64_t *a, uint64_t *b) {
+  uint64_t x, y;
+  /* start with integer square root */
+  x = y = isqrt64(k);
+  /* We're done if k was a perfect square */
+  if (x * y == k) { *a = x; *b = y; return; }
+  /* here, x * y < k. increase y and possibly x so that x * y > k */
+  if (x * ++y < k) x++;
+  /* adjust x and y until x * y <= k... */
+  while (x * y > k) { x--; y++; }
+  /* then copy out the previous values to a and b so a * b >= k */
+  *a = x + 1; *b = y - 1;
+}
 
 /* Modified RC4 KSA - second loop */
 void tprpg_reseed(tprpg_ctx *ctx, const uint8_t *key, const size_t key_sz) {
@@ -127,24 +197,6 @@ void tprpg_setkey(tprpg_ctx *ctx, const uint8_t *key, const size_t key_sz) {
 
   ctx->last_k = 0;
   ctx->state  = TPRPG_KEYED;
-}
-
-
-/* XTEA modified for uint32 in/out */
-static uint32_t _tprpg_xtea32(const uint32_t m, const uint32_t key[4]) {
-  uint32_t i, sum=0;
-  uint16_t l, r;
-
-  l = m >> 16;    /* upper 16 bits */
-  r = m & 0xffff; /* lower 16 bits */
-  for (i=0; i < NUM_CYCLES; i++) {
-    /* odd round */
-    l += XTEA32_RND(r, sum);
-    sum += DELTA;
-    /* even round */
-    r += XTEA32_RND(l, sum>>11);
-  }
-  return ((uint32_t)l << 16) + r;
 }
 
 /* Generalized Feistel cipher using modified XTEA as round function */
